@@ -1,8 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from app.database import get_db
-from app.schemas.user import UserCreate, UserUpdate, UserResponse
+from app.schemas.user import UserCreate, UserUpdate, UserResponse, PaginatedUserResponse
 from app.crud.user import create_user, get_users, get_user_by_id, update_user, delete_user
+from math import ceil
 
 router = APIRouter(
     prefix="/users",
@@ -10,13 +12,30 @@ router = APIRouter(
 )
 
 
-@router.post("/", response_model=UserResponse, status_code=201)
+@router.post("", response_model=UserResponse, status_code=201)
 async def create(user: UserCreate, db: AsyncSession = Depends(get_db)):
-    return await create_user(db, user)
+    try:
+        return await create_user(db, user)
+    except IntegrityError:
+        raise HTTPException(status_code=409, detail="Email already exists")
 
-@router.get("/", response_model=list[UserResponse])
-async def read_users(db: AsyncSession = Depends(get_db)):
-    return await get_users(db)
+@router.get("", response_model=PaginatedUserResponse)
+async def read_users(
+    page: int = Query(1, ge=1, description="Número de página"),
+    page_size: int = Query(10, ge=1, le=100, description="Cantidad de items por página"),
+    db: AsyncSession = Depends(get_db)
+):
+    skip = (page - 1) * page_size
+    users, total = await get_users(db, skip=skip, limit=page_size)
+    total_pages = ceil(total / page_size) if total > 0 else 1
+    
+    return PaginatedUserResponse(
+        items=users,
+        total=total,
+        page=page,
+        page_size=page_size,
+        total_pages=total_pages
+    )
 
 @router.get("/{user_id}", response_model=UserResponse)
 async def read(user_id: int, db: AsyncSession = Depends(get_db)):
